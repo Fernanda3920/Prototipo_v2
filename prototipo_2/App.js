@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, SafeAreaView, ScrollView } from 'react-native';
 // ¡IMPORTANTE! Hemos cambiado la ruta de importación para que apunte
-// a la nueva ubicación: ./components/NotificationButton
+import SQLiteNotesComponent from './components/SQLiteNotesComponent';
 import NotificationButton from './components/NotificationButton'; 
 
 
@@ -36,7 +36,7 @@ export default function App() {
             title="Programar Recordatorio (5s)"
             notificationTitle="⏰ ¡Recordatorio!"
             notificationBody="¡No olvides revisar tu lista de pendientes!"
-            delaySeconds={5}
+            delaySeconds={20}
             color="#e67e22" // Naranja
           />
 
@@ -48,6 +48,7 @@ export default function App() {
             delaySeconds={1}
             color="#c0392b" // Rojo
           />
+          <SQLiteNotesComponent />
         </View>
       </ScrollView>
     </SafeAreaView>
