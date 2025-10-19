@@ -1,4 +1,3 @@
-// components/SQLiteNotesComponent.js
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -7,22 +6,74 @@ import {
   TouchableOpacity,
   FlatList,
   StyleSheet,
-  Alert
+  Modal, // Usaremos Modal para la alerta/confirmación
 } from 'react-native';
+// Importamos el servicio de Firebase que creamos
+import { ensureUserIsAuthenticated, syncNoteToFirestore } from '../services/firebaseService'; 
 import * as SQLite from 'expo-sqlite';
 
 // Abrimos/creamos la base de datos
 const db = SQLite.openDatabaseSync('notasApp.db');
 
+// --- Componente de Modal de Alerta Personalizado (Reemplazo de Alert.alert) ---
+const CustomModal = ({ visible, title, message, onConfirm, onCancel, confirmText = 'Aceptar' }) => {
+    if (!visible) return null;
+
+    return (
+        <Modal
+            animationType="fade"
+            transparent={true}
+            visible={visible}
+            onRequestClose={onCancel} // Para manejar el botón de atrás en Android
+        >
+            <View style={modalStyles.centeredView}>
+                <View style={modalStyles.modalView}>
+                    <Text style={modalStyles.modalTitle}>{title}</Text>
+                    <Text style={modalStyles.modalText}>{message}</Text>
+                    <View style={modalStyles.buttonContainer}>
+                        {onCancel && (
+                            <TouchableOpacity
+                                style={[modalStyles.button, modalStyles.buttonCancel]}
+                                onPress={onCancel}
+                            >
+                                <Text style={modalStyles.textStyle}>Cancelar</Text>
+                            </TouchableOpacity>
+                        )}
+                        <TouchableOpacity
+                            style={[modalStyles.button, modalStyles.buttonConfirm]}
+                            onPress={onConfirm}
+                        >
+                            <Text style={modalStyles.textStyle}>{confirmText}</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </View>
+        </Modal>
+    );
+};
+
 export default function SQLiteNotesComponent() {
   const [nota, setNota] = useState('');
   const [notas, setNotas] = useState([]);
+  const [isSyncing, setIsSyncing] = useState(false); // Nuevo estado para la sincronización
+  
+  // Estados para el modal personalizado
+  const [modalVisible, setModalVisible] = useState(false);
+  const [modalData, setModalData] = useState({});
 
   // Inicializar la base de datos al montar el componente
   useEffect(() => {
     inicializarDB();
     cargarNotas();
   }, []);
+
+  // Función para mostrar el modal
+  const showModal = (title, message, onConfirm, onCancel = null, confirmText = 'Aceptar') => {
+    setModalData({ title, message, onConfirm, onCancel, confirmText });
+    setModalVisible(true);
+  };
+  
+  const hideModal = () => setModalVisible(false);
 
   // Crear la tabla si no existe
   const inicializarDB = async () => {
@@ -34,7 +85,7 @@ export default function SQLiteNotesComponent() {
           fecha TEXT NOT NULL
         );
       `);
-      console.log('✅ Base de datos inicializada');
+      console.log('✅ Base de datos SQLite inicializada');
     } catch (error) {
       console.error('❌ Error al inicializar DB:', error);
     }
@@ -50,50 +101,72 @@ export default function SQLiteNotesComponent() {
     }
   };
 
-  // Guardar una nueva nota
+  // Guardar una nueva nota y SINCRONIZAR
   const guardarNota = async () => {
     if (nota.trim() === '') {
-      Alert.alert('Atención', 'Por favor escribe algo antes de guardar');
+      showModal('Atención', 'Por favor escribe algo antes de guardar', hideModal);
       return;
     }
 
+    const notaTexto = nota.trim();
+    const fechaActual = new Date().toLocaleString('es-MX');
+
+    // 1. Guardar en SQLite (La parte que funciona offline)
     try {
-      const fechaActual = new Date().toLocaleString('es-MX');
       await db.runAsync(
         'INSERT INTO notas (texto, fecha) VALUES (?, ?)',
-        [nota, fechaActual]
+        [notaTexto, fechaActual]
       );
       
       setNota(''); // Limpiar el campo
       cargarNotas(); // Recargar la lista
-      Alert.alert('✅ Éxito', 'Nota guardada correctamente');
+      
+      showModal('✅ Éxito', 'Nota guardada localmente. Iniciando sincronización a la nube...', hideModal);
+
+      // 2. SINCRONIZAR A FIREBASE (Lógica de servidor)
+      setIsSyncing(true);
+      const userId = await ensureUserIsAuthenticated(); // Asegura tener un UID
+      await syncNoteToFirestore(userId, notaTexto, fechaActual);
+
+      showModal('✅ Éxito Total', 'Nota guardada y sincronizada correctamente con Firebase!', hideModal);
+
     } catch (error) {
-      console.error('❌ Error al guardar nota:', error);
-      Alert.alert('Error', 'No se pudo guardar la nota');
+      // Si falla SQLite o Firebase
+      console.error('❌ Error en el proceso de guardar/sincronizar:', error);
+      
+      // Mostrar al usuario qué falló. Es CRÍTICO que el usuario sepa si la copia de seguridad falló.
+      if (error.message.includes("autenticar")) {
+           showModal('⚠️ Error de Servidor', 'La nota se guardó localmente, pero falló la conexión al servidor (Firebase). Revisa tu internet o autenticación.', hideModal);
+      } else {
+           showModal('❌ Error Local', 'No se pudo guardar la nota ni localmente ni en la nube. Revisa los logs de SQLite.', hideModal);
+      }
+      
+    } finally {
+        setIsSyncing(false);
     }
   };
 
   // Eliminar una nota
   const eliminarNota = async (id) => {
-    Alert.alert(
-      'Confirmar',
-      '¿Estás seguro de eliminar esta nota?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Eliminar',
-          style: 'destructive',
-          onPress: async () => {
+    showModal(
+        'Confirmar',
+        '¿Estás seguro de eliminar esta nota? (Solo se eliminará localmente)',
+        async () => {
+            hideModal(); // Ocultar el modal antes de la operación
             try {
               await db.runAsync('DELETE FROM notas WHERE id = ?', [id]);
               cargarNotas();
-              Alert.alert('✅ Eliminada', 'La nota ha sido eliminada');
+              showModal('✅ Eliminada', 'La nota ha sido eliminada localmente.', hideModal);
+              // NOTA: Para eliminar de Firebase, necesitarías guardar el ID de Firestore en SQLite 
+              // y luego llamar a una función para eliminar el registro de la nube. 
+              // Por simplicidad de la copia, solo eliminamos localmente.
             } catch (error) {
               console.error('❌ Error al eliminar:', error);
+              showModal('❌ Error Local', 'No se pudo eliminar la nota.', hideModal);
             }
-          }
-        }
-      ]
+        },
+        hideModal,
+        'Eliminar'
     );
   };
 
@@ -115,7 +188,17 @@ export default function SQLiteNotesComponent() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.titulo}>📝 Mis Notas (SQLite)</Text>
+      {/* El Custom Modal debe ir primero en el render */}
+      <CustomModal 
+        visible={modalVisible}
+        title={modalData.title}
+        message={modalData.message}
+        onConfirm={modalData.onConfirm}
+        onCancel={modalData.onCancel}
+        confirmText={modalData.confirmText}
+      />
+      
+      <Text style={styles.titulo}>📝 Mis Notas (SQLite + Firebase Sync)</Text>
       
       {/* Input para nueva nota */}
       <View style={styles.inputContainer}>
@@ -126,14 +209,18 @@ export default function SQLiteNotesComponent() {
           onChangeText={setNota}
           multiline
         />
-        <TouchableOpacity style={styles.btnGuardar} onPress={guardarNota}>
-          <Text style={styles.btnTexto}>💾 Guardar</Text>
+        <TouchableOpacity 
+            style={[styles.btnGuardar, isSyncing && styles.btnGuardarDisabled]} 
+            onPress={guardarNota}
+            disabled={isSyncing}
+        >
+          <Text style={styles.btnTexto}>{isSyncing ? '☁️ Sincronizando...' : '💾 Guardar y Sincronizar'}</Text>
         </TouchableOpacity>
       </View>
 
       {/* Lista de notas */}
       <Text style={styles.subtitulo}>
-        Notas guardadas: {notas.length}
+        Notas guardadas localmente: {notas.length}
       </Text>
       
       <FlatList
@@ -151,90 +238,173 @@ export default function SQLiteNotesComponent() {
   );
 }
 
+// --- ESTILOS ---
 const styles = StyleSheet.create({
   container: {
-    width: '100%',
-    maxWidth: 500,
-    marginVertical: 20,
+    flex: 1,
+    padding: 20,
+    backgroundColor: '#f5f5f5',
   },
   titulo: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: 'bold',
-    color: '#2c3e50',
+    color: '#1e40af',
     marginBottom: 15,
     textAlign: 'center',
   },
+  subtitulo: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#374151',
+    marginTop: 10,
+    marginBottom: 5,
+  },
   inputContainer: {
-    marginBottom: 20,
+    marginBottom: 15,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    padding: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.41,
+    elevation: 2,
   },
   input: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 10,
-    padding: 15,
-    fontSize: 16,
     minHeight: 80,
+    borderColor: '#d1d5db',
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderRadius: 6,
+    padding: 10,
+    fontSize: 16,
     marginBottom: 10,
+    textAlignVertical: 'top',
   },
   btnGuardar: {
-    backgroundColor: '#3498db',
-    padding: 15,
-    borderRadius: 10,
+    backgroundColor: '#059669', // Verde para guardar
+    padding: 12,
+    borderRadius: 6,
     alignItems: 'center',
+  },
+  btnGuardarDisabled: {
+    backgroundColor: '#9ca3af', // Gris si está sincronizando
   },
   btnTexto: {
     color: 'white',
     fontSize: 16,
-    fontWeight: '600',
-  },
-  subtitulo: {
-    fontSize: 16,
-    color: '#7f8c8d',
-    marginBottom: 10,
-    fontWeight: '600',
+    fontWeight: 'bold',
   },
   lista: {
-    maxHeight: 400,
+    marginTop: 10,
   },
   notaCard: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 15,
-    marginBottom: 10,
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
+    backgroundColor: 'white',
+    padding: 15,
+    borderRadius: 8,
+    marginBottom: 10,
+    borderLeftWidth: 5,
+    borderLeftColor: '#3b82f6', // Borde azul
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
+    shadowRadius: 1.0,
+    elevation: 1,
   },
   notaContent: {
     flex: 1,
+    paddingRight: 10,
   },
   notaTexto: {
     fontSize: 16,
-    color: '#2c3e50',
     marginBottom: 5,
+    color: '#1f2937',
   },
   notaFecha: {
     fontSize: 12,
-    color: '#95a5a6',
+    color: '#6b7280',
     fontStyle: 'italic',
   },
   btnEliminar: {
-    padding: 10,
+    backgroundColor: '#ef4444', // Rojo para eliminar
+    padding: 8,
+    borderRadius: 50,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   btnEliminarTexto: {
-    fontSize: 24,
+    fontSize: 18,
   },
   textoVacio: {
     textAlign: 'center',
-    color: '#95a5a6',
-    fontSize: 16,
     marginTop: 30,
+    fontSize: 16,
+    color: '#6b7280',
   },
+});
+
+const modalStyles = StyleSheet.create({
+    centeredView: {
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+        backgroundColor: 'rgba(0, 0, 0, 0.4)', // Fondo semitransparente
+    },
+    modalView: {
+        margin: 20,
+        backgroundColor: "white",
+        borderRadius: 12,
+        padding: 25,
+        alignItems: "center",
+        shadowColor: "#000",
+        shadowOffset: {
+            width: 0,
+            height: 2
+        },
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+        elevation: 5,
+        width: '80%',
+        maxWidth: 400,
+    },
+    modalTitle: {
+        marginBottom: 15,
+        textAlign: "center",
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: '#1f2937',
+    },
+    modalText: {
+        marginBottom: 20,
+        textAlign: "center",
+        fontSize: 16,
+        color: '#4b5563',
+    },
+    buttonContainer: {
+        flexDirection: 'row',
+        justifyContent: 'space-around',
+        width: '100%',
+    },
+    button: {
+        borderRadius: 8,
+        padding: 10,
+        elevation: 2,
+        minWidth: 100,
+        marginHorizontal: 5,
+    },
+    buttonConfirm: {
+        backgroundColor: "#3b82f6", // Azul
+    },
+    buttonCancel: {
+        backgroundColor: "#9ca3af", // Gris
+    },
+    textStyle: {
+        color: "white",
+        fontWeight: "bold",
+        textAlign: "center"
+    }
 });
