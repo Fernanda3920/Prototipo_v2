@@ -5,6 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context'; // 👈 Importar el hook
 import NotificationsScreen from './screens/NotificationsScreen';
 import NotesScreen from './screens/NotesScreen';
+import SchedulerScreen from './screens/SchedulerScreen';
 
 const Tab = createBottomTabNavigator();
 
@@ -39,6 +40,16 @@ function MyTabNavigator() {
         },
       }}
     >
+      <Tab.Screen
+  name="Programar"
+  component={SchedulerScreen}
+  options={{
+    tabBarIcon: ({ size }) => (
+      <Text style={{ fontSize: size }}>📅</Text>
+    ),
+    title: '📅 Programar',
+  }}
+/>
       <Tab.Screen
         name="Notificaciones"
         component={NotificationsScreen}
