@@ -1,7 +1,7 @@
 // Importaciones de Firebase
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 
 // --- CONFIGURACIÓN DE FIREBASE ---
 // Reemplaza estos valores con tu configuración real de Firebase
@@ -40,6 +40,7 @@ export const ensureUserIsAuthenticated = async () => {
  * @param {string} userId - El UID del usuario de Firebase.
  * @param {string} texto - El contenido de la nota.
  * @param {string} fechaLocal - La fecha y hora local de la nota (de SQLite).
+ * @returns {Promise<string>} El ID del documento creado en Firebase
  */
 export const syncNoteToFirestore = async (userId, texto, fechaLocal) => {
     if (!userId) {
@@ -57,9 +58,38 @@ export const syncNoteToFirestore = async (userId, texto, fechaLocal) => {
             }
         );
         console.log("✅ Nota sincronizada con Firebase, ID de documento:", docRef.id);
-        return docRef.id;
+        return docRef.id; // IMPORTANTE: Devuelve el ID del documento
     } catch (error) {
         console.error("❌ Error al sincronizar con Firebase:", error);
+        throw error;
+    }
+};
+
+/**
+ * Elimina una nota de Firestore.
+ * @param {string} userId - El UID del usuario de Firebase.
+ * @param {string} firebaseId - El ID del documento en Firebase.
+ * @returns {Promise<void>}
+ */
+export const deleteNoteFromFirestore = async (userId, firebaseId) => {
+    if (!userId) {
+        throw new Error("El ID de usuario es requerido para eliminar de Firestore.");
+    }
+    
+    if (!firebaseId) {
+        throw new Error("El ID del documento de Firebase es requerido para eliminar.");
+    }
+
+    try {
+        // Referencia al documento específico
+        const noteRef = doc(db, 'Usuarios', userId, 'RegistrosDiarios', firebaseId);
+        
+        // Eliminar el documento
+        await deleteDoc(noteRef);
+        
+        console.log("✅ Nota eliminada de Firebase. ID:", firebaseId);
+    } catch (error) {
+        console.error("❌ Error al eliminar nota de Firebase:", error);
         throw error;
     }
 };

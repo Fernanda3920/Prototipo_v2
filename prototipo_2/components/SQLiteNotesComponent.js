@@ -6,15 +6,16 @@ import {
   TouchableOpacity,
   FlatList,
   StyleSheet,
-  Modal, // Usaremos Modal para la alerta/confirmación
+  Modal,
 } from 'react-native';
-import { ensureUserIsAuthenticated, syncNoteToFirestore } from '../services/firebaseService'; 
+import { ensureUserIsAuthenticated, syncNoteToFirestore, deleteNoteFromFirestore } from '../services/firebaseService'; 
 import * as SQLite from 'expo-sqlite';
 import { componentStyles as styles, modalStyles } from '../styles/SQLLiteNotesStyles';
+
 // Abrimos/creamos la base de datos
 const db = SQLite.openDatabaseSync('notasApp.db');
 
-// --- Componente de Modal de Alerta Personalizado (Reemplazo de Alert.alert) ---
+// --- Componente de Modal de Alerta Personalizado ---
 const CustomModal = ({ visible, title, message, onConfirm, onCancel, confirmText = 'Aceptar' }) => {
     if (!visible) return null;
 
@@ -23,7 +24,7 @@ const CustomModal = ({ visible, title, message, onConfirm, onCancel, confirmText
             animationType="fade"
             transparent={true}
             visible={visible}
-            onRequestClose={onCancel} // Para manejar el botón de atrás en Android
+            onRequestClose={onCancel}
         >
             <View style={modalStyles.centeredView}>
                 <View style={modalStyles.modalView}>
@@ -54,7 +55,7 @@ const CustomModal = ({ visible, title, message, onConfirm, onCancel, confirmText
 export default function SQLiteNotesComponent() {
   const [nota, setNota] = useState('');
   const [notas, setNotas] = useState([]);
-  const [isSyncing, setIsSyncing] = useState(false); // Nuevo estado para la sincronización
+  const [isSyncing, setIsSyncing] = useState(false);
   
   // Estados para el modal personalizado
   const [modalVisible, setModalVisible] = useState(false);
@@ -74,16 +75,30 @@ export default function SQLiteNotesComponent() {
   
   const hideModal = () => setModalVisible(false);
 
-  // Crear la tabla si no existe
+  // Crear la tabla si no existe (AHORA CON FIREBASE_ID)
   const inicializarDB = async () => {
     try {
+      // Primero intentamos agregar la columna si la tabla ya existe
       await db.execAsync(`
         CREATE TABLE IF NOT EXISTS notas (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           texto TEXT NOT NULL,
-          fecha TEXT NOT NULL
+          fecha TEXT NOT NULL,
+          firebase_id TEXT
         );
       `);
+      
+      // Si la tabla ya existía sin firebase_id, la agregamos
+      try {
+        await db.execAsync(`
+          ALTER TABLE notas ADD COLUMN firebase_id TEXT;
+        `);
+        console.log('✅ Columna firebase_id agregada');
+      } catch (alterError) {
+        // Si falla es porque ya existe la columna, no pasa nada
+        console.log('ℹ️ Columna firebase_id ya existe');
+      }
+      
       console.log('✅ Base de datos SQLite inicializada');
     } catch (error) {
       console.error('❌ Error al inicializar DB:', error);
@@ -109,13 +124,16 @@ export default function SQLiteNotesComponent() {
 
     const notaTexto = nota.trim();
     const fechaActual = new Date().toLocaleString('es-MX');
+    let localId = null;
 
     // 1. Guardar en SQLite (La parte que funciona offline)
     try {
-      await db.runAsync(
-        'INSERT INTO notas (texto, fecha) VALUES (?, ?)',
-        [notaTexto, fechaActual]
+      const result = await db.runAsync(
+        'INSERT INTO notas (texto, fecha, firebase_id) VALUES (?, ?, ?)',
+        [notaTexto, fechaActual, null] // firebase_id empieza como null
       );
+      
+      localId = result.lastInsertRowId; // Guardamos el ID local
       
       setNota(''); // Limpiar el campo
       cargarNotas(); // Recargar la lista
@@ -124,16 +142,24 @@ export default function SQLiteNotesComponent() {
 
       // 2. SINCRONIZAR A FIREBASE (Lógica de servidor)
       setIsSyncing(true);
-      const userId = await ensureUserIsAuthenticated(); // Asegura tener un UID
-      await syncNoteToFirestore(userId, notaTexto, fechaActual);
+      const userId = await ensureUserIsAuthenticated();
+      const firebaseDocId = await syncNoteToFirestore(userId, notaTexto, fechaActual);
+
+      // 3. ACTUALIZAR SQLite CON EL ID DE FIREBASE
+      if (firebaseDocId && localId) {
+        await db.runAsync(
+          'UPDATE notas SET firebase_id = ? WHERE id = ?',
+          [firebaseDocId, localId]
+        );
+        console.log(`✅ Firebase ID (${firebaseDocId}) vinculado a nota local (${localId})`);
+        cargarNotas(); // Recargar para mostrar el firebase_id
+      }
 
       showModal('✅ Éxito Total', 'Nota guardada y sincronizada correctamente con Firebase!', hideModal);
 
     } catch (error) {
-      // Si falla SQLite o Firebase
       console.error('❌ Error en el proceso de guardar/sincronizar:', error);
       
-      // Mostrar al usuario qué falló. Es CRÍTICO que el usuario sepa si la copia de seguridad falló.
       if (error.message.includes("autenticar")) {
            showModal('⚠️ Error de Servidor', 'La nota se guardó localmente, pero falló la conexión al servidor (Firebase). Revisa tu internet o autenticación.', hideModal);
       } else {
@@ -145,23 +171,32 @@ export default function SQLiteNotesComponent() {
     }
   };
 
-  // Eliminar una nota
-  const eliminarNota = async (id) => {
+  // Eliminar una nota (AHORA TAMBIÉN DE FIREBASE)
+  const eliminarNota = async (id, firebaseId) => {
     showModal(
         'Confirmar',
-        '¿Estás seguro de eliminar esta nota? (Solo se eliminará localmente)',
+        '¿Estás seguro de eliminar esta nota? Se eliminará localmente y de la nube.',
         async () => {
-            hideModal(); // Ocultar el modal antes de la operación
+            hideModal();
             try {
+              // 1. Eliminar de SQLite
               await db.runAsync('DELETE FROM notas WHERE id = ?', [id]);
+              
+              // 2. Eliminar de Firebase SI existe firebaseId
+              if (firebaseId) {
+                const userId = await ensureUserIsAuthenticated();
+                await deleteNoteFromFirestore(userId, firebaseId);
+                console.log(`✅ Nota eliminada de Firebase: ${firebaseId}`);
+              } else {
+                console.log('⚠️ Esta nota no tiene firebase_id, solo se eliminó localmente');
+              }
+              
               cargarNotas();
-              showModal('✅ Eliminada', 'La nota ha sido eliminada localmente.', hideModal);
-              // NOTA: Para eliminar de Firebase, necesitarías guardar el ID de Firestore en SQLite 
-              // y luego llamar a una función para eliminar el registro de la nube. 
-              // Por simplicidad de la copia, solo eliminamos localmente.
+              showModal('✅ Eliminada', 'La nota ha sido eliminada completamente.', hideModal);
+              
             } catch (error) {
               console.error('❌ Error al eliminar:', error);
-              showModal('❌ Error Local', 'No se pudo eliminar la nota.', hideModal);
+              showModal('❌ Error', 'Hubo un problema al eliminar la nota. Revisa tu conexión.', hideModal);
             }
         },
         hideModal,
@@ -175,10 +210,16 @@ export default function SQLiteNotesComponent() {
       <View style={styles.notaContent}>
         <Text style={styles.notaTexto}>{item.texto}</Text>
         <Text style={styles.notaFecha}>{item.fecha}</Text>
+        {/* Indicador visual de si está sincronizada */}
+        {item.firebase_id ? (
+          <Text style={styles.notaSyncStatus}>☁️ Sincronizada</Text>
+        ) : (
+          <Text style={styles.notaSyncStatusPending}>📴 Solo local</Text>
+        )}
       </View>
       <TouchableOpacity
         style={styles.btnEliminar}
-        onPress={() => eliminarNota(item.id)}
+        onPress={() => eliminarNota(item.id, item.firebase_id)}
       >
         <Text style={styles.btnEliminarTexto}>🗑️</Text>
       </TouchableOpacity>
@@ -187,7 +228,6 @@ export default function SQLiteNotesComponent() {
 
   return (
     <View style={styles.container}>
-      {/* El Custom Modal debe ir primero en el render */}
       <CustomModal 
         visible={modalVisible}
         title={modalData.title}
