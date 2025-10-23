@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { View, TextInput, Button, StyleSheet, Alert, Text, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { signInWithEmailAndPassword } from 'firebase/auth';
-import { auth } from '../firebaseService'; // Importa tu 'auth'
+import { auth } from '../services/firebaseService'; // Importa tu 'auth'
 
 export default function LoginScreen({ navigation }) {
   const [email, setEmail] = useState('');

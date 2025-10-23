@@ -1,12 +1,12 @@
 // screens/TrackerScreen.js
 import React from 'react';
 import { SafeAreaView, StyleSheet } from 'react-native';
-import MedicationScheduler from '../components/MedicationScheduler';
+import MedicationCalendarTracker from '../components/MedicationCalendarTracker';
 
-export default function SchedulerScreen() {
+export default function TrackerScreen() {
   return (
     <SafeAreaView style={styles.container}>
-      <MedicationScheduler/>
+      <MedicationCalendarTracker />
     </SafeAreaView>
   );
 }

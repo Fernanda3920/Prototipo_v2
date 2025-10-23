@@ -1,4 +1,4 @@
-// En: App.js
+// App.js
 
 import React, { useState, useEffect } from 'react';
 import { Text, ActivityIndicator, View, StyleSheet } from 'react-native';
@@ -15,6 +15,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import NotificationsScreen from './screens/NotificationsScreen';
 import NotesScreen from './screens/NotesScreen';
 import SchedulerScreen from './screens/SchedulerScreen';
+import TrackerScreen from './screens/TrackerScreen'; // ← AGREGADO
 import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
 
@@ -23,7 +24,6 @@ const Stack = createNativeStackNavigator();
 
 // ----------------------------------------------------------------
 // 1. TU NAVEGADOR DE TABS (AppStack)
-// (Este es tu código original, solo le cambiamos el nombre a AppStack)
 // ----------------------------------------------------------------
 function AppStack() {
   const insets = useSafeAreaInsets();
@@ -53,16 +53,16 @@ function AppStack() {
         name="Programar"
         component={SchedulerScreen}
         options={{
-          tabBarIcon: ({ size }) => (<Text style={{ fontSize: size }}>📅</Text>),
-          title: '📅 Programar',
+          tabBarIcon: ({ size }) => (<Text style={{ fontSize: size }}>💊</Text>),
+          title: '💊 Medicamentos',
         }}
       />
       <Tab.Screen
-        name="Notificaciones"
-        component={NotificationsScreen}
+        name="Seguimiento"
+        component={TrackerScreen}
         options={{
-          tabBarIcon: ({ size }) => (<Text style={{ fontSize: size }}>🔔</Text>),
-          title: '🔔 Notificaciones',
+          tabBarIcon: ({ size }) => (<Text style={{ fontSize: size }}>📊</Text>),
+          title: '📊 Seguimiento',
         }}
       />
       <Tab.Screen
@@ -71,6 +71,14 @@ function AppStack() {
         options={{
           tabBarIcon: ({ size }) => (<Text style={{ fontSize: size }}>📝</Text>),
           title: '📝 Mis Notas',
+        }}
+      />
+      <Tab.Screen
+        name="Notificaciones"
+        component={NotificationsScreen}
+        options={{
+          tabBarIcon: ({ size }) => (<Text style={{ fontSize: size }}>🔔</Text>),
+          title: '🔔 Notificaciones',
         }}
       />
     </Tab.Navigator>

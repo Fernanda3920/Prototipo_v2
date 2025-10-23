@@ -1,9 +1,3 @@
-// En: firebaseSecrets.js
-
-// ⚠️ ¡ALERTA DE SEGURIDAD! ⚠️
-// 1. VE A TU CONSOLA DE FIREBASE Y REGENERA TU API KEY AHORA.
-// 2. PEGA TU NUEVA CONFIGURACIÓN AQUÍ.
-// 3. AÑADE ESTE ARCHIVO A TU .gitignore
 
 export const firebaseConfig = {
   apiKey: "AIzaSyDHMfAMvNcE5plC79ztJ1q6RtuwrB3D1qU",
